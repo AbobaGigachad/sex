@@ -1,69 +1,44 @@
-# Скрипты настройки Docker Swarm кластера
+# tgstack
 
-## Файлы
+Стек: MongoDB 8.2.3 (replica set), Redis, Nginx. В Swarm — всё на master; приложения (tguser) на workers.
 
-- **phienix.sh** - Скрипт автоматической раскатки Master ноды
-- **setup_worker.sh** - Скрипт настройки Worker ноды
+## Деплой
 
-## Использование
-
-### Master нода
-
-Запустите на master ноде:
+**Один хост:**
 
 ```bash
-cd /home/chat2desk/tgcloud
-./phienix.sh
+docker compose up -d
 ```
 
-Скрипт выполнит:
-- Обновление системы
-- Установку Docker, Docker Compose, fail2ban, python3
-- Создание пользователя `security`
-- Создание директории `tgcloud`
-- Настройку NFS (если `/mnt` существует)
-- Инициализацию Docker Swarm (если не инициализирован)
-
-### Worker ноды
-
-На каждой worker ноде выполните:
+**Swarm:**
 
 ```bash
-# 1. Скопируйте скрипт setup_worker.sh на worker ноду
-# 2. Получите Worker Token с master ноды:
-#    sudo docker swarm join-token worker -q
-
-# 3. Запустите скрипт:
-./setup_worker.sh <WORKER_TOKEN> <MASTER_IP>
+docker stack deploy -c docker-compose.yml tgstack
 ```
 
-Пример:
-```bash
-./setup_worker.sh SWMTKN-1-xxx 10.128.0.23
-```
-
-Скрипт выполнит:
-- Обновление системы
-- Установку Docker, Docker Compose, fail2ban, python3, nfs-common
-- Подключение к Docker Swarm
-- Настройку NFS mount (`/mnt`)
-
-## Важно
-
-После установки Docker на worker нодах:
-- Перелогиньтесь или выполните `newgrp docker` для применения группы docker
-- Проверьте подключение: `sudo docker node ls` (на master ноде)
-
-## Текущие настройки
-
-- **Master IP**: 10.128.0.23
-- **Worker Token**: `SWMTKN-1-3w6gp81bymq6e7d0eh5vmmqnp9oxqpqqkrgthoj6jjcatdy4lf-do5qrynz0g4nsve13n3oqa2jw`
-- **Worker ноды**: 51.250.4.176, 84.201.159.19, 89.169.136.241
-- **NFS**: `/mnt` на master ноде, монтируется на всех worker нодах
-
-## Быстрый старт для Worker нод
+Первый раз создать каталоги (если нужно):
 
 ```bash
-./setup_worker.sh SWMTKN-1-3w6gp81bymq6e7d0eh5vmmqnp9oxqpqqkrgthoj6jjcatdy4lf-do5qrynz0g4nsve13n3oqa2jw 10.128.0.23
+mkdir -p /mnt/telegram/users /mnt/tguser/tg_clickers
 ```
-# sex
+
+Инициализация replica set MongoDB (один раз после первого запуска):
+
+```bash
+# Compose:
+docker exec mongo_primary mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"mongo_primary:27017"},{_id:1,host:"mongo_secondary:27017"}]})'
+
+# Swarm (имя стека tgstack):
+cid=$(docker ps -q -f name=tgstack_mongo_primary | head -1)
+docker exec $cid mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"tgstack_mongo_primary:27017"},{_id:1,host:"tgstack_mongo_secondary:27017"}]})'
+```
+
+## Конфигуратор номеров
+
+`telegramCluster/tguser.py` — создание/старт/стоп инстансов как сервисов Swarm на worker-нодах. Данные: `/mnt/telegram/users/<phone>/`.
+
+Запуск (с master): `python3 telegramCluster/tguser.py`
+
+## Домен и HTTPS
+
+Nginx настроен на **tgcloud.chat2desk.com**. Для HTTPS положите сертификаты в `certs/`: `fullchain.pem`, `privkey.pem`. Затем перезапустите nginx.
